@@ -1,5 +1,6 @@
 """Router unificado WhatsApp — detecta Twilio (form-data) vs Meta (JSON) por Content-Type."""
 
+import asyncio
 import json
 import logging
 from typing import Callable, Awaitable
@@ -27,7 +28,17 @@ def create_whatsapp_router(
     Factory que devuelve un APIRouter con GET y POST /whatsapp.
     Cada app pasa sus propios resolvers y callbacks sin que el router
     conozca la lógica de negocio.
+
+    run_agent debe ser una función sincrónica (se ejecuta en threadpool via
+    asyncio.to_thread). No pasar coroutines directamente.
     """
+    if not meta_app_secret:
+        logger.warning(
+            "create_whatsapp_router | app=%s | meta_app_secret no configurado — "
+            "verificación de firma Meta deshabilitada",
+            app_id,
+        )
+
     router = APIRouter()
 
     @router.get("/whatsapp")
@@ -65,11 +76,20 @@ def create_whatsapp_router(
                 "Este número no está disponible. Comuníquese directamente con el club."
             )
 
+        tenant_id = club.get("tenant_id")
+        if tenant_id is None:
+            logger.error(
+                "resolver_twilio_missing_tenant_id | app=%s | numero_club=%s",
+                app_id, numero_club,
+            )
+            return wh_twilio.twiml_response("Error interno. Por favor intente más tarde.")
+
         session_id = wh_twilio.session_key(numero_club, numero_jugador)
         historial  = await get_historial(session_id)
-        tenant_id  = club["tenant_id"]
-        logger.info("whatsapp_incoming | app=%s | tenant=%s | proveedor=twilio", app_id, tenant_id)
-        respuesta, historial_nuevo = run_agent(
+        proveedor  = "twilio"
+        logger.info("whatsapp_incoming | app=%s | tenant=%s | proveedor=%s", app_id, tenant_id, proveedor)
+        respuesta, historial_nuevo = await asyncio.to_thread(
+            run_agent,
             historial       = historial,
             mensaje_usuario = Body,
             tenant_id       = tenant_id,
@@ -83,7 +103,9 @@ def create_whatsapp_router(
         payload_bytes = await request.body()
         signature     = request.headers.get("X-Hub-Signature-256", "")
 
-        if meta_app_secret and not wh_meta.verificar_firma(payload_bytes, signature, meta_app_secret):
+        # Rechaza solo si el secret está configurado Y la firma está presente pero es inválida.
+        # Requests sin header de firma (pings de consola Meta) son aceptados.
+        if meta_app_secret and signature and not wh_meta.verificar_firma(payload_bytes, signature, meta_app_secret):
             raise HTTPException(status_code=403, detail="Firma inválida")
 
         try:
@@ -106,11 +128,20 @@ def create_whatsapp_router(
         if not club.get("meta_access_token"):
             return PlainTextResponse("ok", status_code=200)
 
-        tenant_id  = club["tenant_id"]
+        tenant_id = club.get("tenant_id")
+        if tenant_id is None:
+            logger.error(
+                "resolver_meta_missing_tenant_id | app=%s | phone_number_id=%s",
+                app_id, phone_number_id,
+            )
+            return PlainTextResponse("ok", status_code=200)
+
         session_id = wh_meta.session_key(phone_number_id, numero_usuario)
         historial  = await get_historial(session_id)
-        logger.info("whatsapp_incoming | app=%s | tenant=%s | proveedor=meta", app_id, tenant_id)
-        respuesta, historial_nuevo = run_agent(
+        proveedor  = "meta"
+        logger.info("whatsapp_incoming | app=%s | tenant=%s | proveedor=%s", app_id, tenant_id, proveedor)
+        respuesta, historial_nuevo = await asyncio.to_thread(
+            run_agent,
             historial       = historial,
             mensaje_usuario = texto,
             tenant_id       = tenant_id,
@@ -119,12 +150,17 @@ def create_whatsapp_router(
         )
         await save_historial(session_id, historial_nuevo)
 
-        wh_meta.enviar_mensaje(
+        ok = wh_meta.enviar_mensaje(
             phone_number_id = phone_number_id,
             numero_usuario  = numero_usuario,
             texto           = respuesta,
             access_token    = club["meta_access_token"],
         )
+        if not ok:
+            logger.error(
+                "enviar_mensaje_failed | app=%s | tenant=%s | numero=%s",
+                app_id, tenant_id, numero_usuario,
+            )
         return PlainTextResponse("ok", status_code=200)
 
     return router

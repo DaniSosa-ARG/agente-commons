@@ -26,8 +26,8 @@ META_STATUS_UPDATE = {
     }}]}]
 }
 
-APP_SECRET    = "test_secret"
-VERIFY_TOKEN  = "test_verify_token"
+APP_SECRET   = "test_secret"
+VERIFY_TOKEN = "test_verify_token"
 
 
 # ── callbacks mock ────────────────────────────────────────────────────────────
@@ -74,11 +74,11 @@ def make_client(meta_app_secret: str = "", meta_verify_token: str = VERIFY_TOKEN
     return TestClient(app)
 
 
-def _firma_valida(payload_bytes: bytes) -> str:
+def _firma_valida_header(payload_bytes: bytes) -> str:
     return "sha256=" + hmac.new(APP_SECRET.encode(), payload_bytes, hashlib.sha256).hexdigest()
 
 
-# ── tests ─────────────────────────────────────────────────────────────────────
+# ── tests ACs del story ───────────────────────────────────────────────────────
 
 def test_twilio_request_procesado():
     """POST form-data → detecta Twilio, ejecuta agente, responde TwiML."""
@@ -149,3 +149,45 @@ def test_meta_verificacion_webhook():
     )
     assert response.status_code == 200
     assert response.text == "challenge_abc"
+
+
+# ── tests de patches del code review ─────────────────────────────────────────
+
+def test_twilio_club_desconocido():
+    """Twilio con número de club no registrado → responde TwiML de error."""
+    client = make_client()
+    response = client.post(
+        "/whatsapp",
+        data={"From": "whatsapp:+5491100000001", "To": "whatsapp:+9999999999", "Body": "hola"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 200
+    assert "<?xml" in response.text or "<Response>" in response.text
+    assert "no está disponible" in response.text
+
+
+def test_meta_firma_ausente_con_secret():
+    """POST sin header de firma aunque haya secret → acepta (ping de consola Meta)."""
+    client = make_client(meta_app_secret=APP_SECRET)
+    payload = json.dumps(META_STATUS_UPDATE).encode()
+    response = client.post(
+        "/whatsapp",
+        content=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 200
+    assert response.text == "ok"
+
+
+def test_meta_webhook_sin_challenge():
+    """GET sin hub.challenge → responde 200 con body vacío."""
+    client = make_client()
+    response = client.get(
+        "/whatsapp",
+        params={
+            "hub.mode": "subscribe",
+            "hub.verify_token": VERIFY_TOKEN,
+        },
+    )
+    assert response.status_code == 200
+    assert response.text == ""

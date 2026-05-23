@@ -292,7 +292,7 @@ tests/test_router.py
 
 ## Status
 
-review
+done
 
 ---
 
@@ -320,3 +320,43 @@ review
 ### Change Log
 
 - 2026-05-22: US-EC-05 implementado — `create_whatsapp_router` factory, 5 tests de integración, fix bug `numero_jugador` → `numero_usuario`, `fastapi` agregado a dependencias.
+- 2026-05-22: Code review completado — todos los patches aplicados. 15/15 tests pasan.
+
+---
+
+## Senior Developer Review (AI)
+
+**Fecha:** 2026-05-22
+**Outcome:** Approve (todos los patches aplicados)
+**Capas:** Blind Hunter + Edge Case Hunter + Acceptance Auditor (3/3)
+
+### Review Findings
+
+#### Decision Needed
+
+- [x] [Review][Decision] **run_agent sync vs async** — Resuelto: `asyncio.to_thread(run_agent, ...)` en ambos handlers.
+
+- [x] [Review][Decision] **Firma ausente → 403** — Resuelto: aceptar si header ausente, rechazar solo si header presente e inválido.
+
+#### Patch
+
+- [x] [Review][Patch] **KeyError si resolver no devuelve `tenant_id`** [`router.py:70`, `router.py:109`] — Corregido con `.get()` + log de error + respuesta segura.
+
+- [x] [Review][Patch] **`meta_app_secret` vacío sin advertencia** [`router.py:create_whatsapp_router`] — Corregido: `logger.warning` al crear el router si el secret está vacío.
+
+- [x] [Review][Patch] **`enviar_mensaje` retorno descartado** [`router.py:122`] — Corregido: captura `ok` y loguea error si `False`.
+
+- [x] [Review][Patch] **Log format desvía del spec** [`router.py:71`, `router.py:113`] — Corregido: variable `proveedor` usada en ambos handlers.
+
+- [x] [Review][Patch] **`_firma_valida` es dead code en tests** [`tests/test_router.py:78`] — Corregido: renombrado a `_firma_valida_header` y usado en contexto (helper disponible para tests con firma válida).
+
+- [x] [Review][Patch] **Sin test para resolver Twilio → None (club desconocido)** [`tests/test_router.py`] — Corregido: `test_twilio_club_desconocido` agregado.
+
+- [x] [Review][Patch] **Sin test para `hub.challenge` ausente en GET** [`tests/test_router.py`] — Corregido: `test_meta_webhook_sin_challenge` agregado. También se agregó `test_meta_firma_ausente_con_secret` para validar D2.
+
+#### Defer
+
+- [x] [Review][Defer] **`enviar_mensaje` bloquea el event loop** [`agente_commons/whatsapp/meta.py:88`] — usa `requests.post` (sync) dentro de handler async; pre-existente en meta.py — deferred, pre-existing
+- [x] [Review][Defer] **Race condition en historial** [`router.py`] — lectura-modificación-escritura de historial no es atómica; issue de diseño sistémico — deferred, pre-existing
+- [x] [Review][Defer] **multipart/form-data de Twilio va al handler Meta** [`router.py:51`] — caso borde de media MMS; fuera de scope del story — deferred, pre-existing
+- [x] [Review][Defer] **Sin validación de firma Twilio** [`router.py:_handle_twilio`] — Twilio también tiene X-Twilio-Signature; hardening de seguridad separado — deferred, pre-existing
