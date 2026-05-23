@@ -287,3 +287,36 @@ tests/test_router.py
 - El router usa el patrón factory (`create_whatsapp_router`) para recibir las dependencias de cada app sin acoplarse a ellas.
 - `agente-turnos` usará el mismo router con sus propios resolvers (`resolver_consultorio_meta`, `resolver_consultorio`).
 - Una vez implementado, `main.py` de `agente-canchas` queda significativamente más limpio.
+
+---
+
+## Status
+
+review
+
+---
+
+## File List
+
+- `agente_commons/whatsapp/router.py` — nuevo: factory `create_whatsapp_router`
+- `agente_commons/whatsapp/__init__.py` — actualizado: exporta `create_whatsapp_router`
+- `tests/test_router.py` — nuevo: 5 tests de integración del router
+- `pyproject.toml` — actualizado: agrega `fastapi>=0.100` a dependencias; sección `[project.optional-dependencies]` con dev deps
+
+---
+
+## Dev Agent Record
+
+### Completion Notes
+
+- Implementado `create_whatsapp_router()` en `agente_commons/whatsapp/router.py` siguiendo el diseño del story.
+- **Fix aplicado:** en `_handle_meta`, el story referenciaba `numero_jugador` (variable no definida en ese scope, pertenece a `_handle_twilio`). Corregido a `numero_usuario`.
+- Logger definido a nivel de módulo (`logging.getLogger(__name__)`); el story lo omitía.
+- `import json` movido al nivel de módulo (el story lo tenía inline dentro del `try`).
+- Tests cubren los 5 escenarios del story: Twilio form-data, Meta JSON, status update ignorado, firma inválida, verificación webhook.
+- `enviar_mensaje` mockeado en `test_meta_request_procesado` para evitar llamadas HTTP reales.
+- 12/12 tests pasan (7 previos de `test_meta.py` + 5 nuevos de `test_router.py`).
+
+### Change Log
+
+- 2026-05-22: US-EC-05 implementado — `create_whatsapp_router` factory, 5 tests de integración, fix bug `numero_jugador` → `numero_usuario`, `fastapi` agregado a dependencias.
