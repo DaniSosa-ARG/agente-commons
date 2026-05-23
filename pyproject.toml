@@ -10,7 +10,11 @@ requires-python = ">=3.11"
 dependencies = [
     "requests>=2.31",
     "twilio>=9.0",
+    "fastapi>=0.100",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "httpx>=0.24"]
 
 [tool.setuptools.packages.find]
 where = ["."]
