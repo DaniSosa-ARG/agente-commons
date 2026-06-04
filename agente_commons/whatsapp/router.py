@@ -1,17 +1,26 @@
 """Router unificado WhatsApp — detecta Twilio (form-data) vs Meta (JSON) por Content-Type."""
 
 import asyncio
+import inspect
 import json
 import logging
 from typing import Callable, Awaitable
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
 from . import meta as wh_meta
 from . import twilio_helper as wh_twilio
 
 logger = logging.getLogger(__name__)
+
+
+async def _llamar_run_agent(run_agent_fn, **kwargs):
+    """Despacha run_agent sin importar si es sync o async."""
+    if inspect.iscoroutinefunction(run_agent_fn):
+        return await run_agent_fn(**kwargs)
+    else:
+        return await asyncio.to_thread(run_agent_fn, **kwargs)
 
 
 def create_whatsapp_router(
@@ -29,8 +38,9 @@ def create_whatsapp_router(
     Cada app pasa sus propios resolvers y callbacks sin que el router
     conozca la lógica de negocio.
 
-    run_agent debe ser una función sincrónica (se ejecuta en threadpool via
-    asyncio.to_thread). No pasar coroutines directamente.
+    run_agent puede ser síncrono o async. El handler devuelve 200 a Meta /
+    TwiML vacío a Twilio de forma inmediata; run_agent se ejecuta en
+    background via BackgroundTasks para evitar reintentos por timeout.
     """
     if not meta_app_secret:
         logger.warning(
@@ -56,13 +66,13 @@ def create_whatsapp_router(
         raise HTTPException(status_code=403, detail="Verificación fallida")
 
     @router.post("/whatsapp")
-    async def whatsapp_unified(request: Request):
+    async def whatsapp_unified(request: Request, background_tasks: BackgroundTasks):
         content_type = request.headers.get("content-type", "")
         if "application/x-www-form-urlencoded" in content_type:
-            return await _handle_twilio(request)
-        return await _handle_meta(request)
+            return await _handle_twilio(request, background_tasks)
+        return await _handle_meta(request, background_tasks)
 
-    async def _handle_twilio(request: Request) -> PlainTextResponse:
+    async def _handle_twilio(request: Request, background_tasks: BackgroundTasks) -> PlainTextResponse:
         form           = await request.form()
         From           = form.get("From", "")
         To             = form.get("To", "")
@@ -84,22 +94,37 @@ def create_whatsapp_router(
             )
             return wh_twilio.twiml_response("Error interno. Por favor intente más tarde.")
 
+        background_tasks.add_task(
+            _procesar_twilio,
+            numero_club    = numero_club,
+            numero_jugador = numero_jugador,
+            body           = Body,
+            club           = club,
+        )
+        return wh_twilio.twiml_response("")
+
+    async def _procesar_twilio(numero_club: str, numero_jugador: str, body: str, club: dict):
         session_id = wh_twilio.session_key(numero_club, numero_jugador)
         historial  = await get_historial(session_id)
-        proveedor  = "twilio"
-        logger.info("whatsapp_incoming | app=%s | tenant=%s | proveedor=%s", app_id, tenant_id, proveedor)
-        respuesta, historial_nuevo = await asyncio.to_thread(
-            run_agent,
-            historial       = historial,
-            mensaje_usuario = Body,
-            tenant_id       = tenant_id,
-            tenant_params   = club,
-            numero_usuario  = numero_jugador,
-        )
-        await save_historial(session_id, historial_nuevo)
-        return wh_twilio.twiml_response(respuesta)
+        tenant_id  = club["tenant_id"]
+        logger.info("whatsapp_processing | app=%s | tenant=%s | proveedor=twilio", app_id, tenant_id)
 
-    async def _handle_meta(request: Request) -> PlainTextResponse:
+        try:
+            _respuesta, historial_nuevo = await _llamar_run_agent(
+                run_agent,
+                historial       = historial,
+                mensaje_usuario = body,
+                tenant_id       = tenant_id,
+                tenant_params   = club,
+                numero_usuario  = numero_jugador,
+            )
+        except Exception:
+            logger.exception("run_agent_error | app=%s | tenant=%s | proveedor=twilio", app_id, tenant_id)
+            return
+
+        await save_historial(session_id, historial_nuevo)
+
+    async def _handle_meta(request: Request, background_tasks: BackgroundTasks) -> PlainTextResponse:
         payload_bytes = await request.body()
         signature     = request.headers.get("X-Hub-Signature-256", "")
 
@@ -117,50 +142,57 @@ def create_whatsapp_router(
         if mensaje is None:
             return PlainTextResponse("ok", status_code=200)
 
-        phone_number_id = mensaje["phone_number_id"]
-        numero_usuario  = mensaje["numero_usuario"]
-        texto           = mensaje["texto"]
-
-        club = resolver_meta(phone_number_id)
+        club = resolver_meta(mensaje["phone_number_id"])
         if club is None:
             return PlainTextResponse("ok", status_code=200)
 
         if not club.get("meta_access_token"):
             return PlainTextResponse("ok", status_code=200)
 
-        tenant_id = club.get("tenant_id")
-        if tenant_id is None:
+        if club.get("tenant_id") is None:
             logger.error(
                 "resolver_meta_missing_tenant_id | app=%s | phone_number_id=%s",
-                app_id, phone_number_id,
+                app_id, mensaje["phone_number_id"],
             )
             return PlainTextResponse("ok", status_code=200)
 
-        session_id = wh_meta.session_key(phone_number_id, numero_usuario)
-        historial  = await get_historial(session_id)
-        proveedor  = "meta"
-        logger.info("whatsapp_incoming | app=%s | tenant=%s | proveedor=%s", app_id, tenant_id, proveedor)
-        respuesta, historial_nuevo = await asyncio.to_thread(
-            run_agent,
-            historial       = historial,
-            mensaje_usuario = texto,
-            tenant_id       = tenant_id,
-            tenant_params   = club,
-            numero_usuario  = numero_usuario,
+        background_tasks.add_task(
+            _procesar_meta,
+            mensaje = mensaje,
+            club    = club,
         )
-        await save_historial(session_id, historial_nuevo)
+        return PlainTextResponse("ok", status_code=200)
 
+    async def _procesar_meta(mensaje: dict, club: dict):
+        session_id = wh_meta.session_key(mensaje["phone_number_id"], mensaje["numero_usuario"])
+        historial  = await get_historial(session_id)
+        tenant_id  = club["tenant_id"]
+        logger.info("whatsapp_processing | app=%s | tenant=%s | proveedor=meta", app_id, tenant_id)
+
+        try:
+            respuesta, historial_nuevo = await _llamar_run_agent(
+                run_agent,
+                historial       = historial,
+                mensaje_usuario = mensaje["texto"],
+                tenant_id       = tenant_id,
+                tenant_params   = club,
+                numero_usuario  = mensaje["numero_usuario"],
+            )
+        except Exception:
+            logger.exception("run_agent_error | app=%s | tenant=%s | proveedor=meta", app_id, tenant_id)
+            return
+
+        await save_historial(session_id, historial_nuevo)
         ok = wh_meta.enviar_mensaje(
-            phone_number_id = phone_number_id,
-            numero_usuario  = numero_usuario,
+            phone_number_id = mensaje["phone_number_id"],
+            numero_usuario  = mensaje["numero_usuario"],
             texto           = respuesta,
             access_token    = club["meta_access_token"],
         )
         if not ok:
             logger.error(
                 "enviar_mensaje_failed | app=%s | tenant=%s | numero=%s",
-                app_id, tenant_id, numero_usuario,
+                app_id, tenant_id, mensaje["numero_usuario"],
             )
-        return PlainTextResponse("ok", status_code=200)
 
     return router

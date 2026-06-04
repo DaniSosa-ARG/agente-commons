@@ -1,6 +1,8 @@
+import asyncio
 import hmac
 import hashlib
 import json
+import warnings
 from unittest.mock import patch
 
 import pytest
@@ -58,7 +60,7 @@ async def save_historial(session_id, historial):
 
 # ── helper para construir clients ─────────────────────────────────────────────
 
-def make_client(meta_app_secret: str = "", meta_verify_token: str = VERIFY_TOKEN) -> TestClient:
+def make_client(meta_app_secret: str = "", meta_verify_token: str = VERIFY_TOKEN, run_agent=run_agent) -> TestClient:
     app = FastAPI()
     router = create_whatsapp_router(
         app_id            = "test-app",
@@ -191,3 +193,68 @@ def test_meta_webhook_sin_challenge():
     )
     assert response.status_code == 200
     assert response.text == ""
+
+
+# ── tests US-EC-06: async run_agent + BackgroundTasks ─────────────────────────
+
+def test_run_agent_sync_no_bloquea_event_loop():
+    """El webhook devuelve 200 antes de que run_agent termine (BackgroundTasks)."""
+    procesado = []
+
+    def run_agent_lento(**kwargs):
+        import time
+        time.sleep(0.1)
+        procesado.append(True)
+        return "ok", []
+
+    client = make_client(run_agent=run_agent_lento)
+    payload = json.dumps(META_PAYLOAD).encode()
+    with patch("agente_commons.whatsapp.meta.enviar_mensaje", return_value=True):
+        response = client.post(
+            "/whatsapp",
+            content=payload,
+            headers={"Content-Type": "application/json"},
+        )
+    assert response.status_code == 200
+    # TestClient ejecuta background tasks después del response — confirma que corrió
+    assert len(procesado) == 1
+
+
+def test_run_agent_async_es_awaited():
+    """run_agent async se ejecuta correctamente y no genera RuntimeWarning."""
+    async def run_agent_async(**kwargs):
+        await asyncio.sleep(0)
+        return "ok async", []
+
+    client = make_client(run_agent=run_agent_async)
+    payload = json.dumps(META_PAYLOAD).encode()
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        with patch("agente_commons.whatsapp.meta.enviar_mensaje", return_value=True):
+            response = client.post(
+                "/whatsapp",
+                content=payload,
+                headers={"Content-Type": "application/json"},
+            )
+    assert response.status_code == 200
+    runtime_warnings = [x for x in w if issubclass(x.category, RuntimeWarning)]
+    assert len(runtime_warnings) == 0
+
+
+def test_run_agent_error_no_rompe_webhook(caplog):
+    """Si run_agent lanza excepción, el webhook devuelve 200 y el error queda logueado en ERROR."""
+    import logging
+
+    def run_agent_que_explota(**kwargs):
+        raise ValueError("Claude API timeout")
+
+    client = make_client(run_agent=run_agent_que_explota)
+    payload = json.dumps(META_PAYLOAD).encode()
+    with caplog.at_level(logging.ERROR, logger="agente_commons.whatsapp.router"):
+        response = client.post(
+            "/whatsapp",
+            content=payload,
+            headers={"Content-Type": "application/json"},
+        )
+    assert response.status_code == 200
+    assert any("run_agent_error" in r.message for r in caplog.records)
