@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 *)",
+      "Bash(git *)",
+      "Bash(pip install *)",
+      "Bash(python -c \"import agente_commons; print\\('ok'\\); print\\('version:', agente_commons.__version__\\)\")",
+      "Bash(python -c \"import fastapi; print\\('fastapi ok', fastapi.__version__\\)\")",
+      "Bash(python -c \"import twilio; print\\('twilio ok'\\)\")",
+      "Bash(pip show *)",
+      "Bash(python -m pytest tests/test_meta.py -v)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python -c \"from agente_commons.whatsapp import meta, twilio_helper; print\\('imports ok'\\)\")"
+    ]
+  }
+}

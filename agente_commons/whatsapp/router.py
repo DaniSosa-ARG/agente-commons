@@ -24,14 +24,17 @@ async def _llamar_run_agent(run_agent_fn, **kwargs):
 
 
 def create_whatsapp_router(
-    app_id:            str,
-    resolver_meta:     Callable[[str], dict | None],
-    resolver_twilio:   Callable[[str], dict | None],
-    run_agent:         Callable,
-    get_historial:     Callable[[str], Awaitable[list]],
-    save_historial:    Callable[[str, list], Awaitable[None]],
-    meta_verify_token: str = "",
-    meta_app_secret:   str = "",
+    app_id:               str,
+    resolver_meta:        Callable[[str], dict | None],
+    resolver_twilio:      Callable[[str], dict | None],
+    run_agent:            Callable,
+    get_historial:        Callable[[str], Awaitable[list]],
+    save_historial:       Callable[[str, list], Awaitable[None]],
+    meta_verify_token:    str = "",
+    meta_app_secret:      str = "",
+    twilio_account_sid:   str = "",
+    twilio_auth_token:    str = "",
+    twilio_whatsapp_from: str = "",
 ) -> APIRouter:
     """
     Factory que devuelve un APIRouter con GET y POST /whatsapp.
@@ -123,6 +126,21 @@ def create_whatsapp_router(
             return
 
         await save_historial(session_id, historial_nuevo)
+
+        if twilio_account_sid and twilio_auth_token and twilio_whatsapp_from:
+            ok = await asyncio.to_thread(
+                wh_twilio.enviar_mensaje,
+                numero_jugador,
+                _respuesta,
+                twilio_account_sid,
+                twilio_auth_token,
+                twilio_whatsapp_from,
+            )
+            if not ok:
+                logger.error(
+                    "enviar_mensaje_twilio_failed | app=%s | tenant=%s | numero=%s",
+                    app_id, tenant_id, numero_jugador,
+                )
 
     async def _handle_meta(request: Request, background_tasks: BackgroundTasks) -> PlainTextResponse:
         payload_bytes = await request.body()

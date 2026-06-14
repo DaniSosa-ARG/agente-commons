@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0] — Junio 2026
+
+- US-EC-08: Envío activo de respuesta en canal Twilio (`twilio_helper.enviar_mensaje`)
+  - `create_whatsapp_router` acepta `twilio_account_sid`, `twilio_auth_token`, `twilio_whatsapp_from`
+  - `_procesar_twilio` envía la respuesta del agente via Twilio API (simétrico a Meta)
+  - Sin credenciales configuradas, el comportamiento anterior se mantiene (backward compat)
+
 ## [0.2.0] — Junio 2026
 
 - US-EC-07: Módulo `agente_commons/telefono.py` con normalización centralizada de teléfonos
