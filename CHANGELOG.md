@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0] — Agosto 2026
+
+- US-EC-09: `parsear_mensaje()` reconoce mensajes `interactive.type="list_reply"`
+  (paciente tocó una fila de un mensaje de lista interactiva de Meta)
+  - Aditivo — el branch de mensajes de texto no cambia, `_procesar_meta`/`_handle_meta`
+    no requieren ningún cambio
+  - Devuelve el mismo shape de dict que para texto (`phone_number_id`,
+    `numero_usuario`, `texto`) — el consumidor no necesita saber que es un list_reply
+  - `id` y `title` del row elegido viajan codificados en `texto`, separados por el
+    nuevo marker exportado `LIST_REPLY_MARKER` (`agente_commons.whatsapp.meta`)
+  - Tipos de `interactive` distintos a `list_reply` (ej. `button_reply`) se ignoran
+    igual que un tipo de mensaje no soportado — se loguea y se devuelve `None`
+  - Bloqueante de US-55 en `agente-turnos` (selección de motivo por lista interactiva)
+
 ## [0.3.0] — Junio 2026
 
 - US-EC-08: Envío activo de respuesta en canal Twilio (`twilio_helper.enviar_mensaje`)

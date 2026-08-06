@@ -5,6 +5,11 @@ import requests as http_requests
 
 logger = logging.getLogger(__name__)
 
+# US-EC-09: separador de un mensaje interactive.list_reply codificado en el campo
+# "texto" que ya devuelve parsear_mensaje() para mensajes de texto. NUL — no aparece
+# en texto real de WhatsApp. Formato: MARKER + id + "\x00" + title.
+LIST_REPLY_MARKER = "\x00LIST_REPLY\x00"
+
 
 def verificar_firma(payload_bytes: bytes, signature_header: str, app_secret: str) -> bool:
     """
@@ -43,14 +48,35 @@ def parsear_mensaje(data: dict) -> dict | None:
         return None
 
     message = messages[0]
+    phone_number_id = metadata.get("phone_number_id")
+    numero_usuario  = message.get("from")
+
+    # US-EC-09: mensaje interactive.list_reply (paciente tocó una fila de una lista).
+    # Aditivo — no modifica el branch de texto de abajo.
+    if message.get("type") == "interactive":
+        interactive = message.get("interactive", {})
+        if interactive.get("type") != "list_reply":
+            logger.info(f"meta_ignored_interactive_type | type={interactive.get('type')}")
+            return None
+
+        list_reply  = interactive.get("list_reply", {})
+        reply_id    = list_reply.get("id", "")
+        reply_title = list_reply.get("title", "")
+
+        if not phone_number_id or not numero_usuario or not reply_id:
+            return None
+
+        return {
+            "phone_number_id": phone_number_id,
+            "numero_usuario":  numero_usuario,
+            "texto":           f"{LIST_REPLY_MARKER}{reply_id}\x00{reply_title}",
+        }
 
     if message.get("type") != "text":
         logger.info(f"meta_ignored_type | type={message.get('type')}")
         return None
 
-    phone_number_id = metadata.get("phone_number_id")
-    numero_usuario  = message.get("from")
-    texto           = message.get("text", {}).get("body", "")
+    texto = message.get("text", {}).get("body", "")
 
     if not phone_number_id or not numero_usuario or not texto:
         return None
