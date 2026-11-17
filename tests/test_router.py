@@ -71,6 +71,7 @@ def make_client(meta_app_secret: str = "", meta_verify_token: str = VERIFY_TOKEN
         save_historial    = save_historial,
         meta_verify_token = meta_verify_token,
         meta_app_secret   = meta_app_secret,
+        exigir_firma      = False,  # US-EC-10: la firma obligatoria se cubre en test_firma_webhooks.py
     )
     app.include_router(router)
     return TestClient(app)
@@ -169,7 +170,10 @@ def test_twilio_club_desconocido():
 
 
 def test_meta_firma_ausente_con_secret():
-    """POST sin header de firma aunque haya secret → acepta (ping de consola Meta)."""
+    """exigir_firma=False (pre-0.5.0): POST sin header de firma con secret → acepta.
+
+    Con el default (exigir_firma=True) este caso da 403 — ver test_firma_webhooks.py.
+    """
     client = make_client(meta_app_secret=APP_SECRET)
     payload = json.dumps(META_STATUS_UPDATE).encode()
     response = client.post(

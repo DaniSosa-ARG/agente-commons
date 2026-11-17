@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.0] — Noviembre 2026
+
+- US-EC-10: verificación de firma obligatoria en `create_whatsapp_router` (**cambio incompatible**)
+  - Nuevo parámetro `exigir_firma: bool = True`. Con el default, todo POST de Meta sin
+    `X-Hub-Signature-256` válida y todo POST de Twilio sin `X-Twilio-Signature` válida
+    responden 403, antes de llamar al resolver o al agente
+  - Sin `meta_app_secret` / `twilio_auth_token` configurado, los webhooks de ese proveedor se
+    rechazan y se loguea un error al crear el router
+  - Nuevo parámetro `twilio_webhook_url`: URL pública exacta configurada en Twilio. Si se omite,
+    se reconstruye del request con `X-Forwarded-Proto` / `X-Forwarded-Host`
+  - Nueva función `twilio_helper.verificar_firma(url, params, signature, auth_token)`
+  - `exigir_firma=False` conserva el comportamiento de 0.4.0 (solo para tests)
+  - **Al actualizar:** confirmar que `meta_app_secret` y `twilio_auth_token` estén configurados
+    en cada app consumidora antes del deploy
+
 ## [0.4.0] — Agosto 2026
 
 - US-EC-09: `parsear_mensaje()` reconoce mensajes `interactive.type="list_reply"`

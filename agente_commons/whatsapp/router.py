@@ -35,6 +35,8 @@ def create_whatsapp_router(
     twilio_account_sid:   str = "",
     twilio_auth_token:    str = "",
     twilio_whatsapp_from: str = "",
+    exigir_firma:         bool = True,
+    twilio_webhook_url:   str = "",
 ) -> APIRouter:
     """
     Factory que devuelve un APIRouter con GET y POST /whatsapp.
@@ -44,11 +46,32 @@ def create_whatsapp_router(
     run_agent puede ser síncrono o async. El handler devuelve 200 a Meta /
     TwiML vacío a Twilio de forma inmediata; run_agent se ejecuta en
     background via BackgroundTasks para evitar reintentos por timeout.
+
+    US-EC-10 — firma obligatoria (exigir_firma=True, default desde 0.5.0):
+      - Meta: se rechaza (403) todo POST sin X-Hub-Signature-256 válida. Sin
+        meta_app_secret configurado se rechazan todos los POST de Meta.
+      - Twilio: se rechaza (403) todo POST sin X-Twilio-Signature válida. Sin
+        twilio_auth_token configurado se rechazan todos los POST de Twilio.
+      La validación corre antes de resolver el tenant: un request rechazado no
+      toca la base ni el agente.
+    twilio_webhook_url: URL pública exacta que Twilio tiene configurada (la que
+    firma). Si se omite, se reconstruye del request respetando X-Forwarded-Proto
+    y X-Forwarded-Host (Railway termina TLS en el proxy).
+    exigir_firma=False conserva el comportamiento anterior a 0.5.0 (rechaza solo
+    firmas de Meta presentes e inválidas; Twilio sin validar). Solo para tests.
     """
-    if not meta_app_secret:
+    if exigir_firma:
+        for nombre, valor in (("meta_app_secret", meta_app_secret), ("twilio_auth_token", twilio_auth_token)):
+            if not valor:
+                logger.error(
+                    "create_whatsapp_router | app=%s | %s no configurado — "
+                    "todos los webhooks de ese proveedor se van a rechazar con 403",
+                    app_id, nombre,
+                )
+    else:
         logger.warning(
-            "create_whatsapp_router | app=%s | meta_app_secret no configurado — "
-            "verificación de firma Meta deshabilitada",
+            "create_whatsapp_router | app=%s | exigir_firma=False — webhooks sin "
+            "verificación de firma obligatoria (solo para tests)",
             app_id,
         )
 
@@ -75,8 +98,32 @@ def create_whatsapp_router(
             return await _handle_twilio(request, background_tasks)
         return await _handle_meta(request, background_tasks)
 
+    def _url_twilio(request: Request) -> str:
+        if twilio_webhook_url:
+            return twilio_webhook_url
+        proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+        host  = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+        url   = request.url
+        if proto:
+            url = url.replace(scheme=proto)
+        if host:
+            url = url.replace(netloc=host)
+        return str(url)
+
     async def _handle_twilio(request: Request, background_tasks: BackgroundTasks) -> PlainTextResponse:
         form           = await request.form()
+        if exigir_firma:
+            signature = request.headers.get("X-Twilio-Signature", "")
+            try:
+                firma_valida = wh_twilio.verificar_firma(
+                    _url_twilio(request), form, signature, twilio_auth_token
+                )
+            except ValueError:
+                # Una URL de proxy malformada no es un webhook autenticado.
+                firma_valida = False
+            if not firma_valida:
+                logger.warning("twilio_firma_invalida | app=%s | firma_presente=%s", app_id, bool(signature))
+                raise HTTPException(status_code=403, detail="Firma inválida")
         From           = form.get("From", "")
         To             = form.get("To", "")
         Body           = form.get("Body", "")
@@ -146,9 +193,14 @@ def create_whatsapp_router(
         payload_bytes = await request.body()
         signature     = request.headers.get("X-Hub-Signature-256", "")
 
-        # Rechaza solo si el secret está configurado Y la firma está presente pero es inválida.
-        # Requests sin header de firma (pings de consola Meta) son aceptados.
-        if meta_app_secret and signature and not wh_meta.verificar_firma(payload_bytes, signature, meta_app_secret):
+        if exigir_firma:
+            # US-EC-10: Meta firma todo POST de webhook. Sin firma válida (o sin
+            # secret con qué validarla) el remitente no es confiable → 403.
+            if not wh_meta.verificar_firma(payload_bytes, signature, meta_app_secret):
+                logger.warning("meta_firma_invalida | app=%s | firma_presente=%s", app_id, bool(signature))
+                raise HTTPException(status_code=403, detail="Firma inválida")
+        elif meta_app_secret and signature and not wh_meta.verificar_firma(payload_bytes, signature, meta_app_secret):
+            # Comportamiento anterior a 0.5.0 (exigir_firma=False, solo tests).
             raise HTTPException(status_code=403, detail="Firma inválida")
 
         try:
