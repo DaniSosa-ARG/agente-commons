@@ -1,4 +1,5 @@
 import logging
+from twilio.request_validator import RequestValidator
 from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
 from fastapi.responses import PlainTextResponse
@@ -6,6 +7,17 @@ from fastapi.responses import PlainTextResponse
 from agente_commons.telefono import normalizar_telefono_bd, telefono_para_twilio
 
 logger = logging.getLogger(__name__)
+
+
+def verificar_firma(url: str, params: dict, signature_header: str, auth_token: str) -> bool:
+    """
+    US-EC-10: valida X-Twilio-Signature (HMAC-SHA1 de URL + params POST ordenados).
+    Retorna False si falta auth_token o signature_header. `url` debe ser la URL
+    pública exacta que Twilio llamó, incluida la query string.
+    """
+    if not auth_token or not signature_header:
+        return False
+    return RequestValidator(auth_token).validate(url, params, signature_header)
 
 
 def twiml_response(texto: str) -> PlainTextResponse:

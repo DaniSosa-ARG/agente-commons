@@ -47,6 +47,7 @@ def make_client_con_credenciales() -> TestClient:
         twilio_account_sid   = "ACtest123",
         twilio_auth_token    = "auth_token_test",
         twilio_whatsapp_from = "whatsapp:+14155238886",
+        exigir_firma         = False,  # US-EC-10: firma cubierta en test_firma_webhooks.py
     )
     app.include_router(router)
     return TestClient(app)
@@ -61,6 +62,7 @@ def make_client_sin_credenciales() -> TestClient:
         run_agent       = run_agent,
         get_historial   = get_historial,
         save_historial  = save_historial,
+        exigir_firma    = False,  # US-EC-10: firma cubierta en test_firma_webhooks.py
     )
     app.include_router(router)
     return TestClient(app)
