@@ -114,9 +114,14 @@ def create_whatsapp_router(
         form           = await request.form()
         if exigir_firma:
             signature = request.headers.get("X-Twilio-Signature", "")
-            if not wh_twilio.verificar_firma(
-                _url_twilio(request), dict(form), signature, twilio_auth_token
-            ):
+            try:
+                firma_valida = wh_twilio.verificar_firma(
+                    _url_twilio(request), form, signature, twilio_auth_token
+                )
+            except ValueError:
+                # Una URL de proxy malformada no es un webhook autenticado.
+                firma_valida = False
+            if not firma_valida:
                 logger.warning("twilio_firma_invalida | app=%s | firma_presente=%s", app_id, bool(signature))
                 raise HTTPException(status_code=403, detail="Firma inválida")
         From           = form.get("From", "")

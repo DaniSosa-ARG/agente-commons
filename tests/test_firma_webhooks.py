@@ -12,6 +12,10 @@ import hmac
 import json
 import logging
 from unittest.mock import MagicMock
+from urllib.parse import urlencode
+
+import pytest
+from starlette.datastructures import FormData
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -216,3 +220,28 @@ def test_usEC10_exigir_firma_false_conserva_comportamiento_anterior():
     assert _post_meta(client).status_code == 200                       # sin header: pasa
     assert _post_meta(client, firma="sha256=mal").status_code == 403   # presente e inválida: 403
     assert _post_twilio(client).status_code == 200                     # Twilio sin validar
+
+
+def test_usEC10_twilio_firma_con_valores_repetidos():
+    client, mocks = _client(twilio_webhook_url=URL_PUBLICA)
+    params = FormData([*TWILIO_FORM.items(), ("Extra", "one"), ("Extra", "two")])
+    firma = RequestValidator(AUTH_TOKEN).compute_signature(URL_PUBLICA, params)
+    headers = {"Content-Type": "application/x-www-form-urlencoded", "X-Twilio-Signature": firma}
+    resp = client.post("/whatsapp", content=urlencode(params.multi_items()), headers=headers)
+    assert resp.status_code == 200
+    mocks["resolver_twilio"].assert_called_once()
+    mocks["run_agent"].assert_called_once()
+    # La firma debe cubrir también el primer valor, que dict(form) descartaba.
+    alterados = FormData([*TWILIO_FORM.items(), ("Extra", "alterado"), ("Extra", "two")])
+    resp = client.post("/whatsapp", content=urlencode(alterados.multi_items()), headers=headers)
+    assert resp.status_code == 403
+    assert mocks["resolver_twilio"].call_count == 1
+    assert mocks["run_agent"].call_count == 1
+
+
+@pytest.mark.parametrize("host", ["example.com:bad", "["])
+def test_usEC10_twilio_proxy_host_malformado_403(host):
+    client, mocks = _client()
+    resp = _post_twilio(client, firma="invalida", headers={"X-Forwarded-Host": host})
+    assert resp.status_code == 403
+    _sin_efectos(mocks, "twilio")

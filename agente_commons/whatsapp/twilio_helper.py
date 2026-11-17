@@ -9,11 +9,13 @@ from agente_commons.telefono import normalizar_telefono_bd, telefono_para_twilio
 logger = logging.getLogger(__name__)
 
 
-def verificar_firma(url: str, params: dict, signature_header: str, auth_token: str) -> bool:
+def verificar_firma(url: str, params, signature_header: str, auth_token: str) -> bool:
     """
     US-EC-10: valida X-Twilio-Signature (HMAC-SHA1 de URL + params POST ordenados).
     Retorna False si falta auth_token o signature_header. `url` debe ser la URL
-    pública exacta que Twilio llamó, incluida la query string.
+    pública exacta que Twilio llamó, incluida la query string. `params` puede ser
+    un dict o el FormData del request: con FormData se firman todos los valores
+    de una clave repetida (RequestValidator usa getlist), con dict solo el último.
     """
     if not auth_token or not signature_header:
         return False
