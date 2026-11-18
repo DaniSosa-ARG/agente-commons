@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0] — Noviembre 2026
+
+- US-EC-11: `run_agent` puede devolver `None` como respuesta para no enviar nada
+  - Aditivo: con `None`, `_procesar_meta` y `_procesar_twilio` guardan el historial y no
+    llaman a `enviar_mensaje`. Se loguea `respuesta_omitida`
+  - Un string vacío se sigue enviando igual que en 0.5.0
+  - Las apps que nunca devuelven `None` no cambian
+
 ## [0.5.0] — Noviembre 2026
 
 - US-EC-10: verificación de firma obligatoria en `create_whatsapp_router` (**cambio incompatible**)

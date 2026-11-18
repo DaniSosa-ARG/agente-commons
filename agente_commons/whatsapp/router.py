@@ -47,6 +47,10 @@ def create_whatsapp_router(
     TwiML vacío a Twilio de forma inmediata; run_agent se ejecuta en
     background via BackgroundTasks para evitar reintentos por timeout.
 
+    US-EC-11 — run_agent devuelve (respuesta, historial_nuevo). Si respuesta es
+    None, el historial se guarda igual y no se envía ningún mensaje (ni Meta ni
+    Twilio). Un string vacío se sigue enviando como hasta 0.5.0.
+
     US-EC-10 — firma obligatoria (exigir_firma=True, default desde 0.5.0):
       - Meta: se rechaza (403) todo POST sin X-Hub-Signature-256 válida. Sin
         meta_app_secret configurado se rechazan todos los POST de Meta.
@@ -160,7 +164,7 @@ def create_whatsapp_router(
         logger.info("whatsapp_processing | app=%s | tenant=%s | proveedor=twilio", app_id, tenant_id)
 
         try:
-            _respuesta, historial_nuevo = await _llamar_run_agent(
+            respuesta, historial_nuevo = await _llamar_run_agent(
                 run_agent,
                 historial       = historial,
                 mensaje_usuario = body,
@@ -174,11 +178,16 @@ def create_whatsapp_router(
 
         await save_historial(session_id, historial_nuevo)
 
+        if respuesta is None:
+            # US-EC-11: la app decidió no responder este mensaje.
+            logger.info("respuesta_omitida | app=%s | tenant=%s | proveedor=twilio", app_id, tenant_id)
+            return
+
         if twilio_account_sid and twilio_auth_token and twilio_whatsapp_from:
             ok = await asyncio.to_thread(
                 wh_twilio.enviar_mensaje,
                 numero_jugador,
-                _respuesta,
+                respuesta,
                 twilio_account_sid,
                 twilio_auth_token,
                 twilio_whatsapp_from,
@@ -253,6 +262,10 @@ def create_whatsapp_router(
             return
 
         await save_historial(session_id, historial_nuevo)
+        if respuesta is None:
+            # US-EC-11: la app decidió no responder este mensaje.
+            logger.info("respuesta_omitida | app=%s | tenant=%s | proveedor=meta", app_id, tenant_id)
+            return
         ok = wh_meta.enviar_mensaje(
             phone_number_id = mensaje["phone_number_id"],
             numero_usuario  = mensaje["numero_usuario"],
