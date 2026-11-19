@@ -26,3 +26,9 @@ pip install git+https://github.com/DaniSosa-ARG/agente-commons.git@main
 Sin firma válida → 403. Sin el secreto configurado, todos los POST de ese proveedor se
 rechazan. Detrás de un proxy que termina TLS, pasar `twilio_webhook_url` con la URL pública
 exacta configurada en Twilio (o asegurar que el proxy envíe `X-Forwarded-Proto`/`X-Forwarded-Host`).
+
+## Respuesta omitida (desde 0.6.0)
+
+`run_agent` devuelve `(respuesta, historial_nuevo)`. Si `respuesta` es `None`, el router guarda
+el historial y no envía ningún mensaje. Sirve para que la app decida no contestar (por ejemplo,
+un remitente que superó un límite). Un string vacío se sigue enviando.
